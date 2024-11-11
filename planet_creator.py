@@ -1,13 +1,14 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QLineEdit, QPushButton, QFileDialog, QTabWidget, QScrollArea, 
                              QFormLayout, QComboBox, QSpinBox, QDoubleSpinBox, QColorDialog,
-                             QTextEdit, QGridLayout, QCheckBox)
+                             QTextEdit, QGridLayout, QCheckBox, QMessageBox)
 from PyQt6.QtGui import QFont, QColor
 from PyQt6.QtCore import Qt
 from orbit_widgets import OrbitWidget, VerticalOrbitWidget
 from utility_functions import convert_to_dds
 from genconfig import generate_config
 from texture_previewer import TexturePreviewContainer
+from PIL import Image
 
 import os
 
@@ -249,9 +250,8 @@ class PlanetCreator(QMainWindow):
         normal_map_layout.addWidget(self.normal_map_button)
         file_selection_layout.addRow("Normal Map:", normal_map_layout)
 
-        # Generate button
-        generate_button = QPushButton("Generate Kopernicus Config")
-        generate_button.clicked.connect(self.save_config)
+        generate_button = QPushButton("Create Mod Folder")
+        generate_button.clicked.connect(self.save_complete_mod)
         main_layout.addWidget(generate_button)
 
         self.texture_previews = TexturePreviewContainer()
@@ -373,3 +373,88 @@ class PlanetCreator(QMainWindow):
                             f.write(config_content)
                     except Exception as e:
                         print(f"Error converting {texture_path} to DDS: {e}")
+
+    def create_mod_folder_structure(self, config_name, save_path):
+        mod_name = f"{config_name}Pack"
+        mod_folder = os.path.join(save_path, mod_name)
+    
+        folders = {
+            'config': os.path.join(mod_folder, 'GameData', mod_name, 'Config'),
+            'textures': os.path.join(mod_folder, 'GameData', mod_name, 'Textures'),
+            'cache': os.path.join(mod_folder, 'GameData', mod_name, 'Cache')
+        }
+    
+        for folder in folders.values():
+            os.makedirs(folder, exist_ok=True)
+        
+        return mod_folder, folders
+
+    def save_complete_mod(self):
+        if not self.planet_name.text():
+            QMessageBox.warning(self, "Missing Information", "Please enter a planet name before creating the mod folder.")
+            return
+
+        # Get folder location from user
+        save_path = QFileDialog.getExistingDirectory(self, "Select Location to Save Mod Folder")
+        if not save_path:
+            return
+
+        # Create mod folder structure
+        mod_folder, folders = self.create_mod_folder_structure(self.planet_name.text(), save_path)
+    
+        # Save config file
+        config = self.generate_config()
+        config_file = os.path.join(folders['config'], f"{self.planet_name.text()}.cfg")
+        with open(config_file, 'w') as f:
+            f.write(config)
+    
+        # Process and save textures
+        texture_fields = {
+            'color': (self.color_map, 'colormap'),
+            'height': (self.height_map, 'heightmap'),
+            'normal': (self.normal_map, 'normalmap')
+        }
+    
+        for tex_type, (field, suffix) in texture_fields.items():
+            texture_path = field.text()
+            if texture_path:
+                # Generate standardized texture name
+                base_name = f"{self.planet_name.text()}_{suffix}"
+                dds_path = os.path.join(folders['textures'], f"{base_name}.dds")
+            
+                try:
+                    self.convert_to_dds(texture_path, dds_path)
+                    # Update config file with correct texture path
+                    with open(config_file, 'r') as f:
+                        config_content = f.read()
+                    old_name = os.path.splitext(os.path.basename(texture_path))[0]
+                    config_content = config_content.replace(old_name, base_name)
+                    with open(config_file, 'w') as f:
+                        f.write(config_content)
+                except Exception as e:
+                    print(f"Error processing {tex_type} texture: {e}")
+    
+        # Create README file
+        readme_content = f"""# {self.planet_name.text()}Pack
+    Created with KSP Planet Creator
+
+    ## Installation
+    1. Copy the GameData folder to your Kerbal Space Program installation
+    2. Ensure Kopernicus is installed
+
+    ## Planet Details
+    - Name: {self.planet_name.text()}
+    - Parent Body: {self.parent_body.text()}
+    - Radius: {self.radius.value()} km
+    - Surface Gravity: {self.gravity.value()}g
+    """
+    
+        with open(os.path.join(mod_folder, 'README.md'), 'w') as f:
+            f.write(readme_content)
+    
+        QMessageBox.information(
+            self, "Success",
+            f"Mod folder created successfully at:\n{mod_folder}\n\nYou can now copy the GameData folder to your KSP installation."
+        )
+
+        return mod_folder
